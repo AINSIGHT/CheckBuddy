@@ -1,0 +1,34 @@
+# 凭证文件（敏感信息，禁止提交）
+*-credentials.json
+*-credential.json
+*.secret
+*.key
+
+# 提取脚本输出的凭证文件
+trae-credentials.json
+workbuddy-credentials.json
+qoder-credentials.json
+
+# 临时文件
+*.tmp
+*.log
+*.bak
+*.swp
+
+# 系统文件
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# IDE
+.idea/
+.vscode/
+*.iml
+
+# 上传目录
+.uploads/
+.screenshots/
+
+# Node
+node_modules/
+package-lock.json

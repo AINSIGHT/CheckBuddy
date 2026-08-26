@@ -1,0 +1,14 @@
+{
+  "name": "ai-checkin",
+  "version": "1.0.0",
+  "description": "TRAE + WorkBuddy + Qoder 三合一自动签到（青龙面板 / QD 框架）",
+  "main": "checkin_all.js",
+  "scripts": {
+    "checkin": "node checkin_all.js",
+    "extract": "node tools/extract-all-credentials.cjs",
+    "diagnose:qoder": "node tools/qodercn-diagnostic.cjs"
+  },
+  "keywords": ["qinglong", "checkin", "trae", "workbuddy", "qoder", "qiandao"],
+  "license": "MIT",
+  "engines": { "node": ">=18" }
+}
