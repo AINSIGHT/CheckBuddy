@@ -132,19 +132,32 @@ function wbAuthFile() {
 }
 
 function extractWorkBuddyCredential() {
-  const fp = wbAuthFile()
+  let fp = wbAuthFile()
+  if (!fs.existsSync(fp)) {
+    // 新版桌面端文件名改为 workbuddy-desktop-ai.info
+    const alt = fp.replace('workbuddy-desktop.info', 'workbuddy-desktop-ai.info')
+    if (fs.existsSync(alt)) fp = alt
+  }
   if (fs.existsSync(fp + '.logged-out')) throw new Error('WorkBuddy 已退出登录，请先在客户端登录')
   if (!fs.existsSync(fp)) throw new Error('未找到 WorkBuddy 登录文件: ' + fp)
   console.log('  [WorkBuddy] 读取: ' + fp)
   const data = JSON.parse(fs.readFileSync(fp, 'utf8'))
   if (!data || typeof data !== 'object' || typeof data.auth !== 'object') throw new Error('WorkBuddy 登录文件缺少 auth 字段')
-  let token = (data.auth.accessToken || data.auth.access_token || '').trim()
+  const rawAt = data.auth.accessToken != null ? data.auth.accessToken : (data.auth.access_token || '')
+  const rawRt = data.auth.refreshToken != null ? data.auth.refreshToken : (data.auth.refresh_token || '')
+  // 5.6.2+ 默认开启 AtRestEncryption：值是 AES-256-GCM 加密信封，密钥只驻留客户端进程内存
+  if (typeof rawAt === 'object' || /envelope|\$wbEncrypted/.test(String(rawAt))) {
+    throw new Error('WorkBuddy 认证文件为加密信封（密钥不落盘），请改用 node tools/workbuddy-login.cjs 短信登录获取明文 AT/RT')
+  }
+  let token = String(rawAt).trim()
   let tokenUid = ''
   if (token.includes('+')) { const parts = token.split('+', 2); tokenUid = parts[0].trim(); token = parts[1].trim() }
   if (!token) throw new Error('WorkBuddy 登录文件缺少 access token')
   const account = data.account && typeof data.account === 'object' ? data.account : {}
+  const refreshToken = typeof rawRt === 'string' ? rawRt.trim() : ''
+  if (!refreshToken) console.log('  [WorkBuddy] ⚠️ 未找到 refreshToken，签到脚本将以只读 AT 模式运行（过期需重新提取）')
   return {
-    token, uid: String(account.uid || account.id || tokenUid || '').trim(),
+    token, refreshToken, uid: String(account.uid || account.id || tokenUid || '').trim(),
     enterprise_id: String(account.enterpriseId || account.enterprise_id || '').trim(),
     domain: String(data.auth.domain || data.domain || '').trim(),
   }
@@ -699,8 +712,9 @@ function main() {
     }
     if (wbCreds) {
       console.log('  [WorkBuddy]')
-      console.log('    1. WorkBuddy 无 token 刷新机制，使用本地保存的登录态')
-      console.log('    2. 多账号: 切换 WorkBuddy 账号后重跑，将多个凭证合并为数组')
+      console.log('    1. 若输出含 refreshToken，签到脚本会自动续期并轮换 RT（Token 永续）')
+      console.log('    2. 若客户端为 5.6.2+ 加密信封，请改用 node tools/workbuddy-login.cjs 短信登录')
+      console.log('    3. 多账号: 切换 WorkBuddy 账号后重跑，将多个凭证合并为数组')
     }
     if (qoderCreds) {
       console.log('  [Qoder]')

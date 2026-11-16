@@ -1,14 +1,24 @@
 {
   "name": "ai-checkin",
-  "version": "1.0.0",
-  "description": "TRAE + WorkBuddy + Qoder 三合一自动签到（青龙面板 / QD 框架）",
-  "main": "checkin_all.js",
+  "version": "2.0.0",
+  "description": "TRAE + WorkBuddy + Qoder 三合一自动签到（青龙 / GitHub Actions / QD / 本地）",
+  "main": "checkin.js",
   "scripts": {
-    "checkin": "node checkin_all.js",
+    "checkin": "node checkin.js",
+    "checkin:all": "node checkin_all.js",
+    "checkin:dry": "node checkin.js --dry-run",
+    "refresh": "node checkin.js --refresh",
+    "query": "node checkin.js --query",
+    "retry": "node checkin.js --sign-retry-only",
+    "login:workbuddy": "node tools/workbuddy-login.cjs",
+    "login:list": "node tools/workbuddy-login.cjs --list",
+    "login:export": "node tools/workbuddy-login.cjs --export",
     "extract": "node tools/extract-all-credentials.cjs",
+    "save:creds": "node tools/save-credentials.cjs",
     "diagnose:qoder": "node tools/qodercn-diagnostic.cjs"
   },
-  "keywords": ["qinglong", "checkin", "trae", "workbuddy", "qoder", "qiandao"],
+  "keywords": ["qinglong", "checkin", "trae", "workbuddy", "qoder", "qiandao", "github-actions"],
   "license": "MIT",
-  "engines": { "node": ">=18" }
+  "engines": { "node": ">=18" },
+  "dependencies": {}
 }

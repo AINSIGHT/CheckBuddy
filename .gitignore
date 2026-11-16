@@ -3,6 +3,8 @@
 *-credential.json
 *.secret
 *.key
+.env
+.env.local
 
 # 提取脚本输出的凭证文件
 trae-credentials.json
@@ -32,3 +34,14 @@ desktop.ini
 # Node
 node_modules/
 package-lock.json
+
+# 运行期状态（含轮换后的 RT，严禁提交；Actions 私有仓库会强制 -f 单独提交令牌库）
+wb_refresh_tokens.json
+trae_tokens.json
+wb_sign_retry.json
+wb_games_state.json
+wb_login_result.json
+WORKBUDDY_ACCESS_TOKEN.txt
+*.lock
+*.tmp.*
+state/

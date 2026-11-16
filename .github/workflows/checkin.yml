@@ -1,0 +1,81 @@
+name: 🌱 三合一签到（TRAE / WorkBuddy / Qoder）
+
+on:
+  schedule:
+    # GitHub cron 使用 UTC，北京时间 = UTC + 8
+    - cron: '5 2 * * *'     # 北京时间 10:05，Qoder 每日轮次 10:00 刷新后再跑
+    - cron: '37 15 * * *'   # 北京时间 23:37，夜猫窗口（成长任务开启后有用）
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: '运行模式'
+        required: false
+        default: 'full'
+        type: choice
+        options: [full, refresh, query, retry]
+
+env:
+  TZ: Asia/Shanghai
+
+jobs:
+  checkin:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: 检出仓库
+        uses: actions/checkout@v4
+
+      - name: 准备 Node.js（零 npm 依赖，无需 install）
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: 执行签到
+        env:
+          TRAE_CREDENTIALS: ${{ secrets.TRAE_CREDENTIALS }}
+          WORKBUDDY_CREDENTIALS: ${{ secrets.WORKBUDDY_CREDENTIALS }}
+          WORKBUDDY_REFRESH_TOKEN: ${{ secrets.WORKBUDDY_REFRESH_TOKEN }}
+          QODER_CREDENTIALS: ${{ secrets.QODER_CREDENTIALS }}
+          NOTIFY: ${{ secrets.NOTIFY }}
+          BARK_URL: ${{ secrets.BARK_URL }}
+          PUSHPLUS_TOKEN: ${{ secrets.PUSHPLUS_TOKEN }}
+          WXPUSHER_APP_TOKEN: ${{ secrets.WXPUSHER_APP_TOKEN }}
+          WXPUSHER_UID: ${{ secrets.WXPUSHER_UID }}
+          SERVERCHAN_SENDKEY: ${{ secrets.SERVERCHAN_SENDKEY }}
+          WECOM_WEBHOOK: ${{ secrets.WECOM_WEBHOOK }}
+          DINGTALK_WEBHOOK: ${{ secrets.DINGTALK_WEBHOOK }}
+          DINGTALK_SECRET: ${{ secrets.DINGTALK_SECRET }}
+          WB_TASKS: ${{ secrets.WB_TASKS }}
+          WB_SKIP_TASKS: ${{ secrets.WB_SKIP_TASKS }}
+          WB_ACTIVITY_CONFIRM: ${{ secrets.WB_ACTIVITY_CONFIRM }}
+          WB_GROWTH_DISCOVER: ${{ secrets.WB_GROWTH_DISCOVER }}
+          WB_GAMES: ${{ secrets.WB_GAMES }}
+          WB_GAMES_TASKS: ${{ secrets.WB_GAMES_TASKS }}
+          WB_GAMES_SKIP: ${{ secrets.WB_GAMES_SKIP }}
+          QODER_WAIT: ${{ secrets.QODER_WAIT }}
+          WB_GAP: ${{ secrets.WB_GAP }}
+          STATE_DIR: ${{ github.workspace }}/state
+        run: |
+          mkdir -p state
+          case "${{ github.event.inputs.mode || 'full' }}" in
+            refresh) node checkin.js --refresh ;;
+            query)   node checkin.js --query ;;
+            retry)   node checkin.js --sign-retry-only ;;
+            *)       node checkin.js ;;
+          esac
+
+      # RT 每次续期都会轮换。公开仓库跳过此步，避免把唯一有效的刷新令牌写进公开仓库。
+      - name: 回写令牌库（仅私有仓库）
+        if: ${{ github.event.repository.private && always() }}
+        run: |
+          if [ -f state/wb_refresh_tokens.json ]; then
+            cp state/wb_refresh_tokens.json ./wb_refresh_tokens.json
+            git add -f wb_refresh_tokens.json
+            if ! git diff --cached --quiet; then
+              git -c user.name="github-actions[bot]" \
+                  -c user.email="41898282+github-actions[bot]@users.noreply.github.com" \
+                  commit -m "chore: 更新 WorkBuddy 令牌库 [skip ci]"
+              git push
+            fi
+          fi
