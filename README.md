@@ -634,6 +634,70 @@ WorkBuddy 5.6.2+ 客户端的 AT/RT 是 AES-256-GCM 加密值，密钥不落盘�
 
 ----------------------------------------
 
+## 🐲 青龙面板配置（参考 Womsxd/MihoyoBBSTools 的配置方式）
+
+### 1️⃣ 拉取仓库
+
+**方式 A：订阅管理（推荐）**
+
+| 项 | 值 |
+|---|---|
+| 名称 | 三合一签到 |
+| 类型 | 公开仓库 |
+| 链接 | `https://github.com/AINSIGHT/CheckBuddy.git` |
+| 定时规则 | `20 8 * * *`（仅用于自动更新仓库） |
+| 白名单 | `checkin.js\|lib\|platforms` |
+
+**方式 B：指令拉取**
+
+```bash
+ql repo https://github.com/AINSIGHT/CheckBuddy.git "checkin.js|lib|platforms" "" ""
+```
+
+### 2️⃣ 环境变量（本地生成一次，粘贴到青龙）
+
+先在**本地 Windows**（装了客户端的机器）生成凭证：
+
+```powershell
+npm run extract          # 生成 trae-credentials.json / qoder-credentials.json / wb_login_result.json
+```
+
+然后在青龙「环境变量」中添加，**值 = 本地 JSON 文件内容原样粘贴**（查看：`Get-Content <文件> -Raw`，注意含密钥，勿外传）：
+
+| 变量名称 | 值 | 必选 |
+|---|---|---|
+| `TRAE_CREDENTIALS` | `trae-credentials.json` 的完整内容（多账号用 JSON 数组） | ✅ |
+| `QODER_CREDENTIALS` | `qoder-credentials.json` 的完整内容（JSON 数组） | ✅ |
+| `WORKBUDDY_REFRESH_TOKEN` | `wb_login_result.json` 里每个账号的 `refreshToken`，**一行一个** | ✅（用 WorkBuddy 时） |
+| `NOTIFY` | `fail`（仅失败时推送）/ `always` / `off` | 可选 |
+
+可选增强变量（不填也能跑）：`QODER_REGION`（cn/global）、`PUSHPLUS_TOKEN`、`QODER_MACHINE_*` 等，见上方环境变量表。
+
+> TRAE 凭证 JSON 里已包含设备私钥（`privateKeyPEM`），新版续期零配置；不要再单独填 `TRAE_DEVICE_*`。
+
+### 3️⃣ 添加定时任务
+
+| 项 | 值 |
+|---|---|
+| 命令 | `task AINSIGHT_CheckBuddy/checkin.js`（路径以订阅实际目录名为准） |
+| 定时规则 | `10 8 * * *`（每日 8:10） |
+| 手动测试 | 命令后追加参数即可，如 `task AINSIGHT_CheckBuddy/checkin.js --only trae` |
+
+### 4️⃣ 依赖
+
+**无需安装任何第三方依赖** —— 纯 Node.js 内置模块，青龙自带的 Node 即可运行。
+
+### 5️⃣ 通知
+
+脚本自动调用青龙自带的 `sendNotify`（即在青龙 `config.sh` 里配好的通知渠道）；也可用独立的 `PUSHPLUS_TOKEN` / `WXPUSHER_APP_TOKEN` / `SERVERCHAN_SENDKEY` / `QL_CLIENT_ID` + `QL_CLIENT_SECRET`（青龙 OpenAPI）等变量，配哪个推哪个。
+
+### 6️⃣ 注意事项
+
+- 令牌库 `trae_tokens.json` / `qoder_tokens.json` 会在脚本目录自动生成（保存轮换后的 refresh token），**请勿删除**；订阅更新不会覆盖它们。
+- ⚠️ **同一账号不要本地和青龙同时跑**：RT 会被两边互相轮换导致 20101 失效。固定在一处执行；换地方跑时用最新凭证重建环境变量。
+
+----------------------------------------
+
 ## ⚠️ 免责声明
 
 本项目仅供**学习与个人自动化**使用。签到功能参考自 [trae-check](https://github.com/inlayin/trae-check)、[L0NE-6/Trae-AutoCheckin](https://github.com/L0NE-6/Trae-AutoCheckin)、[wallechfox/Trae-Checkin](https://github.com/wallechfox/Trae-Checkin)、[workbuddy-checkin](https://github.com/LiuKay/workbuddy-checkin)、[L0NE-6/WorkBuddy-Daily](https://github.com/L0NE-6/WorkBuddy-Daily)、[pi-provider-qoder](https://github.com/simonsmh/pi-provider-qoder)、[L0NE-6/Qoder-Daily](https://github.com/L0NE-6/Qoder-Daily) 等开源项目，原始版权归原作者所有。请遵守各平台服务条款，合理使用，风险自负。
