@@ -78,6 +78,10 @@ async function main() {
   }
 
   const configured = platforms.filter((p) => p.detect())
+  const missing = platforms.filter((p) => !p.detect())
+  if (missing.length) {
+    console.log('ℹ️ 未配置（跳过）: ' + missing.map((p) => p.name + ' [' + (p.envs || []).join('|') + ']').join('、'))
+  }
   if (!configured.length) {
     const msg = '未设置任何环境变量\n请至少配置 TRAE_CREDENTIALS / WORKBUDDY_CREDENTIALS / WORKBUDDY_REFRESH_TOKEN / QODER_CREDENTIALS 之一'
     await notify.sendQinglong('三合一签到 - 配置错误', msg)
@@ -100,6 +104,16 @@ async function main() {
   if (!selected.length) {
     console.log('⚠️ --only 指定的平台未配置任何账号: ' + args.only.join(','))
     return 0
+  }
+
+  console.log('🎯 本次执行: ' + selected.map((p) => p.name).join('、'))
+  const gamesOn = args.games || env.envBool('WB_GAMES')
+  const wbSelected = selected.some((p) => p.name === 'WorkBuddy')
+  if (gamesOn && !wbSelected) {
+    console.log('⚠️ 已开启互动玩法（--games / WB_GAMES），但本次未执行 WorkBuddy，玩法不会运行')
+  }
+  if (wbSelected && !gamesOn) {
+    console.log('ℹ️ 互动玩法默认关闭，需 WB_GAMES=1 或 --games 才会执行')
   }
 
   const results = []

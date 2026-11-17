@@ -38,6 +38,7 @@ package-lock.json
 # 运行期状态（含轮换后的 RT，严禁提交；Actions 私有仓库会强制 -f 单独提交令牌库）
 wb_refresh_tokens.json
 trae_tokens.json
+qoder_tokens.json
 wb_sign_retry.json
 wb_games_state.json
 wb_login_result.json

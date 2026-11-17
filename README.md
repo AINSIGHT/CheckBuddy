@@ -333,6 +333,10 @@ node tools/workbuddy-login.cjs --clear              # 清空（需输入 yes，-
 |---|---|---|
 | 账号凭证 | `TRAE_CREDENTIALS` `WORKBUDDY_CREDENTIALS` `WORKBUDDY_REFRESH_TOKEN` `QODER_CREDENTIALS` | 至少一个 |
 | Qoder 等待窗口 | `QODER_WAIT` | 可选，默认 `0`（不等待）；轮次未下发时每 60 秒重查，最多 30 分钟 |
+| TRAE 客户端谱系 | `TRAE_CLIENT_ID` `TRAE_REQ_SOURCE` | 可选；默认自动 IDE→SOLO 回退（IDE: `ono9krqynydwx5`/`1`，SOLO: `en1oxy7wnw8j9n`/`2`），`req_source` 与 token 不匹配时会 9074 |
+| TRAE 设备证明 | `TRAE_DEVICE_KEY_PEM` `TRAE_DEVICE_PUB_PEM` `TRAE_DEVICE_ID` `TRAE_MACHINE_ID` | 可选；新版续期（20405）需要。本地运行时凭证 JSON 已含密钥，零配置；青龙/Actions 才需要填 |
+| Qoder 设备头 | `QODER_CLIENT_TYPE` `QODER_MACHINE_TOKEN` `QODER_MACHINE_CODE` `QODER_MACHINE_TYPE` `QODER_MACHINE_ID` `QODER_MACHINE_OS` `QODER_MACHINE_HOSTNAME` `QODER_SASH_UA` `QODER_EXTRA_HEADERS` | 可选；凭证 JSON 内嵌 `machineToken/machineType` 时零配置，青龙/Actions 补环境变量即可 |
+| Qoder 地区 | `QODER_REGION` `QODER_BASE` | 可选；默认 `cn`（openapi.qoder.com.cn），token 失效时自动用 `drt-` 续期并自动探测国际版（openapi.qoder.sh） |
 | WorkBuddy 进阶 | `WB_BASE_URL` `WB_X_DOMAIN` `STATE_DIR` `WB_GAP` `WB_MAKEUP_MAX_PER_RUN` `WB_TASKS` `WB_SKIP_TASKS` `WB_GROWTH_DISCOVER` `WB_GROWTH_WRITE` `WB_ACTIVITY_CONFIRM` | 可选 |
 | 互动玩法 | `WB_GAMES` `WB_GAMES_TASKS` `WB_GAMES_SKIP` `WB_GAMES_BASE_URL` `WB_GAMES_MAX_DRAWS` `WB_GAMES_MAX_BLINDBOX` | 可选，默认关闭 |
 | 本地凭证 | `LOCAL_CREDS` | 可选，默认 `1`（环境变量为空时读取本地凭证 JSON）；置 `0` 关闭 |
@@ -452,7 +456,7 @@ WORKBUDDY_REFRESH_TOKEN（手机号:AT:RT）
 - ♻️ **幂等补缺**：所有流程先查状态再执行，重复运行零副作用
 - 🔄 **刷新结果持久化**：TRAE 轮换后的 token / RT / 设备号原子写回 `trae_tokens.json`，不再每轮拿旧环境变量重刷
 - 🛡️ **统一鉴权判定**：`code=1001` 与 HTTP 401/403 三平台一致处理，不再把鉴权失败误报成「今日已领取」
-- 🔁 **状态预查与复查**：TRAE 领取前先查状态，9074 重试前再次确认，避免重复 claim
+- 🔁 **状态预查与复查**：TRAE 领取前先查状态；`9074` 不再无意义重试（上游实测其根因是设备号不被认可）；`9004/9095` 按「该设备今日已签」计成功
 - ⏳ **Qoder 轮次等待**：`QODER_WAIT` 可在本轮活动未下发时每 60 秒重查；PAT 交换双字段名 + HTTP 400 明确分类
 - 📂 **本机零配置测试**：`npm run extract` / `save:creds` 按平台各存一份凭证 JSON，环境变量为空时自动加载；0600 权限 + gitignore 屏蔽 + 日志脱敏
 - ⏰ **智能续期**：距上次刷新 > 10 天或 AT 7 天内过期才刷新，避免无谓轮换
@@ -544,7 +548,7 @@ WORKBUDDY_REFRESH_TOKEN（手机号:AT:RT）
 | 平台 | 实测结论 |
 |---|---|
 | WorkBuddy | 鉴权头必须带 `Bearer ` 前缀（无前缀返回 401）；登录回执是驼峰 `accessToken` / `refreshToken` / `expiresIn`；刷新时 RT **必须放在 `X-Refresh-Token` 请求头**，放 body 会返回 `10001: refreshToken is empty` |
-| TRAE | `9074 当前参与用户太多` 的根因常是 `x-device-id` 不是真机 **16 位 Aha 数字号**（UUID/GUID 会被判为非客户端设备）；刷新返回的 `BoundDeviceID` 优先作为 deviceId；`code=1001` 是鉴权失败，**不能**当成「今日已领取」；登录回调只给 `refreshToken/data/refreshExpireAt` |
+| TRAE | `9074 当前参与用户太多` 是**误导性文案**：上游同账号同时刻对照实测，根因是 `x-device-id` 不被服务端认可（自造号 9074、客户端真实号通过）。设备号是**十进制数字，15/16 位都存在**（合法长度 12~20），UUID / 32 位 hex 必然失败。claim 与 status 的请求体必须带 `req_source`（**IDE=1 / SOLO=2**，须与 token 谱系匹配），空 body 会被拒成 9074。`code=9004/9095` 表示**该设备**今日已签（成功，非错误）；`code=1001` 是鉴权失败，**不能**当成「今日已领取」；`20101` 是 RT 失效或被轮换；刷新返回的 `BoundDeviceID` 优先作为 deviceId |
 | Qoder | 无效 PAT 返回 **HTTP 400**（不是 401），错误体 `errorCode: BadRequest`；jobToken 交换同时认 `personal_token` / `personal_access_token`；每日额度轮次约 **10:00（北京时间）** 刷新，claim 幂等 |
 
 ----------------------------------------
@@ -571,9 +575,30 @@ WorkBuddy 5.6.2+ 客户端的 AT/RT 是 AES-256-GCM 加密值，密钥不落盘�
 
 **Q：Qoder 报「本轮活动未下发」？**
 每日额度轮次约 10:00（北京时间）刷新，不是零点。把定时任务改到 `5 10 * * *`（10:05），或设 `QODER_WAIT=5` 让脚本每 60 秒重查一次。claim 接口幂等，当天补跑不会多领。
+若**长期**提示未下发，多半是缺 `Cosy-*` 设备头（2026-09-26 起官方要求）：用客户端 `resources/umid/runtime-info.exe --account-stdin` 取 `machineToken / machineCode / machineType`，填 `QODER_MACHINE_*`；官方若改字段名，用 `QODER_EXTRA_HEADERS='{"Cosy-XXX":"yyy"}'` 兜底，无需改代码。
+
+**Q：Qoder 报 `Resource already exists`？**
+这是**幂等冲突，表示今天已经领过了**，不是失败。claim 接口用这个文案（或 HTTP 409）表示重复领取，脚本会显示「今日已签到」。若想二次确认，看 `/sash/api/v1/me/daily-check-in/status` 是否 `CLAIMED_TODAY`。
+
+**Q：TRAE 报 `20101` / `refresh token is invalid`？**
+该账号的 **RT 已失效**（过期，或被别的程序轮换掉了），AT 也过期时无法签到。处理：重新提取这个账号的凭证 `npm run extract -- --trae`（或先在桌面端重新登录再提取）。
+⚠️ **同一个 RT 只能由一个程序轮换**。如果同时挂了别的签到脚本（例如 WorkBuddy-Daily、auto-checkin），两边会互相把对方的 RT 刷失效——这是 `20101` 最常见的真实原因。建议只保留一套。
+
+**Q：TRAE 报 `9074 当前参与用户太多`？**
+这句文案有误导性，**几乎总是设备号问题**，不是真的「人多」。按顺序查：
+1. 日志有没有 `⚠️ deviceId 不是 12~20 位十进制数字` —— UUID/GUID/自造数字都会被拒；
+2. 该 `deviceId` 是否是这个账号在客户端**真实注册过**的号（从别的账号抄来必然 9074）；
+3. 是否多账号**共用同一个**设备号 —— 一个真设备号一天只能签一个账号，N 个账号需要 N 个真号；
+4. 以上都对才是真限流/高峰，错峰 1~2 小时再跑。
+
+脚本现在**不会**对 9074 做 20s/40s 重试（重试无效，只是浪费 60 秒），会直接告诉你该换设备号。
+
+**Q：某个平台完全没出现在日志里？**
+现在启动时会打印两行：`ℹ️ 未配置（跳过）: ...` 与 `🎯 本次执行: ...`。先看这两行——最常见是用了 `--only` 只选了部分平台，或该平台凭证文件/环境变量缺失。
+**互动玩法同理**：`WB_GAMES=1` 或 `--games` 才启用，而且只在**签到成功之后**执行；WorkBuddy 未被执行时玩法不会运行。
 
 **Q：多账号会触发风控吗？**
-默认账号间隔 3 秒（`WB_GAP` 可调），TRAE 每账号独立 `x-device-id`，服务端限流（9074）自动重试。成长任务写操作请谨慎开启。
+默认账号间隔 3 秒（`WB_GAP` 可调）。TRAE **每个账号必须配独立且真实的 `deviceId`** —— 限额按设备算，一个真设备号一天只能签一个账号，共用或编造都会 9074。成长任务写操作请谨慎开启。
 
 **Q：通知不生效？**
 脚本优先加载青龙 `sendNotify`；webhook 渠道需对应环境变量，`NOTIFY=0` 会关闭 webhook（控制台输出和青龙面板通知保留）。
@@ -589,9 +614,29 @@ WorkBuddy 5.6.2+ 客户端的 AT/RT 是 AES-256-GCM 加密值，密钥不落盘�
 
 ----------------------------------------
 
+## 🧬 设备证明与双端点（2026-11 上游源码核对）
+
+以下实现均对照 `L0NE-6/Trae-AutoCheckin`、`L0NE-6/Qoder-Daily` 源码逐字段核对，不是猜测：
+
+**TRAE 新版续期（20405 Device proof required）**
+- 新端点 `https://api.trae.cn/trae/api/v3/oauth/ExchangeToken` 要求带 `DeviceProof`（ECDSA P-256/SHA-256，低 s，base64-DER）与 `DeviceInfo`；签名内容固定为 `POST\n{path}\n{clientId}\n{refreshToken}\n{ts}\n{nonce}`。
+- 密钥**必须来自客户端**（storage.json `iCubeAuthInfo://icube-dc:<设备号>` 解密出的 `privateKeyPEM/publicKeyPEM`），自造密钥对会 20403。`npm run extract` 导出的凭证 JSON 已包含这些字段，本地运行零配置。
+- 组合链 `(ClientID, PlatformCode)`：IDE → 旧ID/IDE_PC → 旧ID/SOLO_PC，仅 10101/20403 才换下一个。
+
+**Qoder campaigns 双端点探测**
+- ① 新体系：`GET /sash/api/v1/me/campaigns` → 筛 `actionType=CLAIM_BENEFIT` + `benefit.kind=CREDITS` 行 → `POST .../campaigns/{id}/claim`（最小鉴权头 + 空 body，避免 503 风控；失败自动换完整设备头重试）。
+- ② 兜底：`daily-check-in/status` + `claim` 旧端点。campaigns 不可用 / 无每日行 / 401 时自动回落。
+- 设备头字段名（源码核对）：`Cosy-MachineToken / Cosy-MachineCode / Cosy-MachineType / Cosy-MachineOS / Cosy-MachineId / Cosy-MachineHostname`；sash 接口 `Cosy-ClientType=10`、`UA=Qoder`。
+
+**UMID 三件套怎么拿（通常不用抓包）**
+- 值由官方组件本地生成：客户端 `resources/umid/runtime-info.exe`，本机装了 Qoder 直接跑 `node tools/qoder-umid.cjs`（国际版加 `--global`），输出可直接粘贴的环境变量。
+- 青龙/服务器没装客户端时才需要抓包：mitmproxy 挂代理（`mitmweb -p 8888`），客户端设置代理后登录一次，装 mitmproxy 根证书解 HTTPS，过滤 `openapi.qoder.com.cn` 看 claim 请求头；或直接设 `QODER_EXTRA_HEADERS` 透传任意头。头字段名源码已核对，一般无需抓包。
+
+----------------------------------------
+
 ## ⚠️ 免责声明
 
-本项目仅供**学习与个人自动化**使用。签到功能参考自 [trae-check](https://github.com/inlayin/trae-check)、[workbuddy-checkin](https://github.com/LiuKay/workbuddy-checkin)、[L0NE-6/WorkBuddy-Daily](https://github.com/L0NE-6/WorkBuddy-Daily)、[pi-provider-qoder](https://github.com/simonsmh/pi-provider-qoder) 等开源项目，原始版权归原作者所有。请遵守各平台服务条款，合理使用，风险自负。
+本项目仅供**学习与个人自动化**使用。签到功能参考自 [trae-check](https://github.com/inlayin/trae-check)、[L0NE-6/Trae-AutoCheckin](https://github.com/L0NE-6/Trae-AutoCheckin)、[wallechfox/Trae-Checkin](https://github.com/wallechfox/Trae-Checkin)、[workbuddy-checkin](https://github.com/LiuKay/workbuddy-checkin)、[L0NE-6/WorkBuddy-Daily](https://github.com/L0NE-6/WorkBuddy-Daily)、[pi-provider-qoder](https://github.com/simonsmh/pi-provider-qoder)、[L0NE-6/Qoder-Daily](https://github.com/L0NE-6/Qoder-Daily) 等开源项目，原始版权归原作者所有。请遵守各平台服务条款，合理使用，风险自负。
 
 ----------------------------------------
 

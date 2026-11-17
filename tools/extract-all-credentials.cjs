@@ -63,55 +63,121 @@ function traeDecrypt(encoded) {
   return JSON.parse(payload.toString('utf8'))
 }
 
-function extractTraeCredential() {
+/** 候选客户端目录：国内 IDE / 国内 SOLO / 国际版都可能装过，逐个探测 */
+const TRAE_CLIENT_DIR_NAMES = ['Trae CN', 'TRAE SOLO CN', 'TRAE SOLO', 'Trae']
+
+function traeStorageCandidates() {
+  const explicit = String(process.env.TRAE_STORAGE_PATH || '').trim()
+  if (explicit) return [explicit]
   const appData = process.env.APPDATA || path.join(os.homedir(), 'AppData', 'Roaming')
-  const storagePath = path.join(appData, 'TRAE SOLO CN', 'User', 'globalStorage', 'storage.json')
-  if (!fs.existsSync(storagePath)) throw new Error('未找到 TRAE 配置文件: ' + storagePath)
-  console.log('  [TRAE] 读取: ' + storagePath)
+  const candidates = TRAE_CLIENT_DIR_NAMES.map(function (name) {
+    return path.join(appData, name, 'User', 'globalStorage', 'storage.json')
+  })
+  // 兜底：扫描所有名字含 trae 的目录，兼容未来改名
+  try {
+    fs.readdirSync(appData).forEach(function (d) {
+      if (!/trae/i.test(d)) return
+      const p = path.join(appData, d, 'User', 'globalStorage', 'storage.json')
+      if (candidates.indexOf(p) < 0) candidates.push(p)
+    })
+  } catch (e) {}
+  return candidates.filter(function (p) { return fs.existsSync(p) })
+}
+
+function extractTraeFromStorage(storagePath) {
+  const dir = path.dirname(path.dirname(path.dirname(storagePath)))
   const storage = JSON.parse(fs.readFileSync(storagePath, 'utf8'))
   const enc = storage['iCubeAuthInfo://icube.cloudide']
-  if (typeof enc !== 'string') throw new Error('未找到 TRAE 登录信息')
+  if (typeof enc !== 'string') return null
   const auth = traeDecrypt(enc)
-  const deviceId = storage['telemetry.devDeviceId']
-  const machineId = storage['telemetry.machineId']
-  if (!deviceId || !machineId) throw new Error('无法读取 TRAE 设备 ID')
+  const machineId = storage['telemetry.machineId'] || ''
 
-  // 优先使用 Aha 16位数字设备号（来自 storage.json 键名 iCubeAuthInfo://icube-dc:{16位数字}）
-  // 参考 baokun-l/trae-work-checkin: 使用 UUID 会被风控判定为非客户端设备，返回 9074
+  // 设备号与签名密钥必须成对匹配：iCubeAuthInfo://icube-dc:<设备号>
+  // 取第一个 dc 键会读到历史设备注册的旧密钥，服务端会回 20403（设备与 token 不匹配）
   const dcPrefix = 'iCubeAuthInfo://icube-dc:'
-  var ahaDeviceId = ''
-  for (var key in storage) {
-    if (key.startsWith(dcPrefix)) {
-      var cand = key.substring(dcPrefix.length)
-      if (/^\d{8,}$/.test(cand)) { ahaDeviceId = cand; break }
-    }
+  const dcEntries = Object.entries(storage).filter(function (kv) {
+    return kv[0].startsWith(dcPrefix) && typeof kv[1] === 'string'
+  })
+  var deviceId = ''
+  var sigRaw = ''
+  for (var i = 0; i < dcEntries.length; i++) {
+    var cand = dcEntries[i][0].substring(dcPrefix.length)
+    if (/^\d{8,}$/.test(cand)) { deviceId = cand; sigRaw = dcEntries[i][1]; break }
+  }
+  if (!sigRaw && dcEntries.length) sigRaw = dcEntries[0][1]
+  var sig = {}
+  if (sigRaw) {
+    try { sig = traeDecrypt(sigRaw) } catch (e) { console.log('  [TRAE] 设备密钥解密失败: ' + e.message) }
   }
 
-  // 也读取 machineid 文件作为后备
-  var machineidFile = path.join(appData, 'TRAE SOLO CN', 'machineid')
+  var machineidFile = path.join(dir, 'machineid')
   var machineidFromFile = ''
   if (fs.existsSync(machineidFile)) {
     try { machineidFromFile = fs.readFileSync(machineidFile, 'utf8').trim() } catch (e) {}
   }
 
-  var sigEntries = Object.entries(storage).filter(([k, v]) => k.startsWith(dcPrefix) && typeof v === 'string').map(([k, v]) => ({ key: k, value: v }))
-  if (!sigEntries.length) throw new Error('未找到 TRAE 签名密钥')
-  const sig = traeDecrypt(sigEntries[0].value)
-  if (!sig.privateKeyPEM || !sig.publicKeyPEM) throw new Error('TRAE 签名密钥无效')
   return {
-    token: auth.token, refreshToken: auth.refreshToken,
-    expiresAt: Date.parse(auth.expiredAt), refreshExpiresAt: Date.parse(auth.refreshExpiredAt),
-    // deviceId 优先级: Aha 16位数字 > machineid 文件 > telemetry UUID
-    deviceId: ahaDeviceId || machineidFromFile || deviceId, machineId,
-    privateKeyPEM: sig.privateKeyPEM, publicKeyPEM: sig.publicKeyPEM,
-    userId: auth.userId,
-    accountName: auth.account && auth.account.username ? auth.account.username : ('TRAE用户' + auth.userId),
-    host: auth.host,
-    // 保存原始设备信息，刷新 token 时必须用原始机器的信息，否则报 "Token device not match"
-    deviceName: os.userInfo().username || 'windows',
-    osInfo: os.type(),
-    osVersion: os.release(),
+    dir: dir,
+    storagePath: storagePath,
+    mtime: fs.statSync(storagePath).mtimeMs,
+    cred: {
+      token: auth.token,
+      refreshToken: auth.refreshToken || '',
+      expiresAt: Date.parse(auth.expiredAt) || 0,
+      refreshExpiresAt: Date.parse(auth.refreshExpiredAt) || 0,
+      // 优先级: dc 数字设备号 > machineid 文件 > telemetry UUID
+      deviceId: deviceId || machineidFromFile || storage['telemetry.devDeviceId'] || '',
+      machineId: machineId,
+      privateKeyPEM: sig.privateKeyPEM || '',
+      publicKeyPEM: sig.publicKeyPEM || '',
+      userId: String(auth.userId || ''),
+      accountName: auth.account && auth.account.username ? auth.account.username : ('TRAE用户' + auth.userId),
+      host: auth.host || '',
+      // 保存原始设备信息，刷新 token 时必须用原始机器的信息，否则报 "Token device not match"
+      deviceName: os.userInfo().username || 'windows',
+      osInfo: os.type(),
+      osVersion: os.release(),
+    },
   }
+}
+
+function extractTraeCredential() {
+  const now = Date.now()
+  const candidates = traeStorageCandidates()
+  if (!candidates.length) {
+    throw new Error('未找到 TRAE 配置文件（候选: ' + TRAE_CLIENT_DIR_NAMES.join(' / ') + '），请先在客户端登录一次')
+  }
+  const parsed = []
+  candidates.forEach(function (storagePath) {
+    var name = path.basename(path.dirname(path.dirname(path.dirname(storagePath))))
+    try {
+      var r = extractTraeFromStorage(storagePath)
+      if (!r) { console.log('  [TRAE] ' + name + ': 无登录信息（未登录过）'); return }
+      var rt = r.cred.refreshExpiresAt
+      var rtDead = !!rt && rt < now
+      console.log('  [TRAE] ' + name + ': 账号 ' + r.cred.accountName +
+        ' | deviceId ' + (r.cred.deviceId || '无') +
+        ' | 设备密钥 ' + (r.cred.privateKeyPEM && r.cred.publicKeyPEM ? '有' : '缺') +
+        ' | RT ' + (rt ? (rtDead ? '已过期 ' + new Date(rt).toLocaleString('zh-CN') : '有效至 ' + new Date(rt).toLocaleString('zh-CN')) : '有效期未知'))
+      parsed.push({ dir: r.dir, mtime: r.mtime, rtDead: rtDead, cred: r.cred })
+    } catch (e) {
+      console.log('  [TRAE] ' + name + ': ' + e.message)
+    }
+  })
+  if (!parsed.length) throw new Error('没有可用的 TRAE 登录信息')
+  // 优选：RT 未过期 > 设备密钥齐全 > storage.json 最近修改
+  parsed.sort(function (a, b) {
+    var score = function (x) { return (x.rtDead ? 0 : 2) + (x.cred.privateKeyPEM && x.cred.publicKeyPEM ? 1 : 0) }
+    return (score(b) - score(a)) || (b.mtime - a.mtime)
+  })
+  var best = parsed[0]
+  console.log('  [TRAE] 采用: ' + path.basename(best.dir) + '（' + best.cred.accountName + '）')
+  if (best.rtDead) console.log('  [TRAE] ⚠️ 该账号 RT 已过期：请在 ' + path.basename(best.dir) + ' 客户端重新登录后再跑本工具')
+  if (/trae\.(ai|com)/i.test(best.cred.host)) {
+    console.log('  [TRAE] ⚠️ 该凭证属于国际站（' + best.cred.host + '），签到走 api.trae.cn，仅国内站账号可用')
+  }
+  if (!best.cred.privateKeyPEM) console.log('  [TRAE] ⚠️ 缺设备私钥：新版续期会报 20405，请在客户端重新登录一次')
+  return best.cred
 }
 
 // ###################################################################
@@ -317,6 +383,7 @@ function extractQoderCNFromCache(appDataDir) {
         if (userInfoRaw.refreshToken) userRefreshToken = userInfoRaw.refreshToken
         if (userInfoRaw.expireTime) userExpiresAt = String(userInfoRaw.expireTime)
         if (userInfoRaw.email) accountName = userInfoRaw.email
+        else if (userInfoRaw.name) accountName = userInfoRaw.name
         if (userInfoRaw.id) {
           // user id 可用于生成 account id
         }
@@ -347,6 +414,13 @@ function extractQoderCNFromCache(appDataDir) {
  * 从 state.vscdb SQLite 数据库读取 Qoder 用户认证信息
  * 尝试多种方法读取 SQLite: node:sqlite, better-sqlite3, sqlite3 命令行
  */
+/** node:sqlite 可能返回 Uint8Array/Buffer，统一成字符串 */
+function coerceStateValue(v) {
+  if (v == null) return null
+  if (typeof v === 'string') return v
+  try { return Buffer.from(v).toString('utf8') } catch (e) { return String(v) }
+}
+
 function readQoderSecretFromStateDb(dbPath, appDataDir) {
   var secretKey = 'secret://aicoding.auth.userInfo'
   var rawValue = null
@@ -357,7 +431,7 @@ function readQoderSecretFromStateDb(dbPath, appDataDir) {
     var DatabaseSync = sqliteMod.DatabaseSync
     var db = new DatabaseSync(dbPath, { readOnly: true })
     var row = db.prepare('SELECT value FROM ItemTable WHERE key = ?').get(secretKey)
-    if (row && row.value) rawValue = typeof row.value === 'string' ? row.value : row.value.toString()
+    if (row && row.value) rawValue = coerceStateValue(row.value)
     db.close()
     console.log('  [Qoder] (node:sqlite) 读取 state.vscdb 成功')
   } catch (e) {
@@ -383,6 +457,32 @@ function readQoderSecretFromStateDb(dbPath, appDataDir) {
   }
 
   if (!rawValue) return null
+
+  // QoderCN 新版把值存成 Node Buffer 的 JSON 序列化形态：{"type":"Buffer","data":[...]}
+  // 里面是 v10 加密信封（v10 + nonce12 + 密文 + tag16），不处理这个形状会读不到用户 token
+  if (/^\s*\{\s*"type"\s*:\s*"Buffer"/.test(rawValue)) {
+    try {
+      var bufObj = JSON.parse(rawValue)
+      if (bufObj && Array.isArray(bufObj.data)) {
+        var buf = Buffer.from(bufObj.data)
+        if (buf.subarray(0, 3).toString('latin1') === 'v10') {
+          var aesKeyBuf = getQoderAesMasterKey(appDataDir)
+          var payloadBuf = buf.subarray(3)
+          var nonceBuf = payloadBuf.subarray(0, QODER_GCM_NONCE_SIZE)
+          var tailBuf = payloadBuf.subarray(QODER_GCM_NONCE_SIZE)
+          var tagBuf = tailBuf.subarray(tailBuf.length - QODER_GCM_TAG_SIZE)
+          var ctBuf = tailBuf.subarray(0, tailBuf.length - QODER_GCM_TAG_SIZE)
+          var decBuf = crypto.createDecipheriv('aes-256-gcm', aesKeyBuf, nonceBuf)
+          decBuf.setAuthTag(tagBuf)
+          return JSON.parse(Buffer.concat([decBuf.update(ctBuf), decBuf.final()]).toString('utf8'))
+        }
+        rawValue = buf.toString('utf8')
+      }
+    } catch (e) {
+      console.log('  [Qoder] Buffer 形态 userInfo 解密失败: ' + e.message)
+      return null
+    }
+  }
 
   // 检查值是否加密（v10 前缀 = Electron safeStorage）
   if (rawValue.startsWith('v10')) {
@@ -484,9 +584,12 @@ function extractQoderCredentials() {
     }
   }
 
-  // 阶段 2: 如果明文缓存没找到，尝试 auth-v2.dat 解密（仅 Windows DPAPI）
-  if (accounts.length === 0 && process.platform === 'win32') {
-    console.log('\n  [Qoder] 明文缓存未找到凭证，尝试 auth-v2.dat 解密...')
+  // 阶段 2: 无论明文缓存是否命中，都尝试 auth-v2.dat 解密（仅 Windows DPAPI）
+  // 原因：QoderCN 明文缓存里通常只有 machine token（只能过设备校验），
+  //       签到要的用户 token（dt-）在 QoderWork 的 auth-v2.dat 里；
+  //       缓存命中就跳过本阶段会导致 daily-check-in 一直 invalid token。
+  if (process.platform === 'win32') {
+    console.log('\n  [Qoder] 尝试 auth-v2.dat 解密，补充用户 token...')
     for (var di = 0; di < appDirs.length; di++) {
       var appDataDir = appDirs[di]
       console.log('\n  [Qoder] 处理目录: ' + appDataDir)
@@ -556,6 +659,18 @@ function extractQoderCredentials() {
         }
       }
     }
+  }
+
+  // 用户 token 优先：machine token 只是设备身份，签到接口需要用户 token
+  if (accounts.length > 1) {
+    var machineTokens = {}
+    for (var mi = 0; mi < accounts.length; mi++) {
+      if (accounts[mi].machineToken) machineTokens[accounts[mi].machineToken] = true
+    }
+    var userAccounts = accounts.filter(function (a) {
+      return a.refreshToken || (a.token && !machineTokens[a.token])
+    })
+    if (userAccounts.length) accounts = userAccounts
   }
 
   if (accounts.length === 0) {
