@@ -646,12 +646,15 @@ WorkBuddy 5.6.2+ 客户端的 AT/RT 是 AES-256-GCM 加密值，密钥不落盘�
 | 类型 | 公开仓库 |
 | 链接 | `https://github.com/AINSIGHT/CheckBuddy.git` |
 | 定时规则 | `20 8 * * *`（仅用于自动更新仓库） |
-| 白名单 | `checkin.js\|lib\|platforms` |
+| 白名单 | `checkin.js` |
+| 依赖文件 | `lib\|platforms` |
+
+> 白名单只放入口脚本，`lib/`、`platforms/` 走依赖文件 —— 否则每个 js 都会被当成独立脚本出现在定时任务列表里。
 
 **方式 B：指令拉取**
 
 ```bash
-ql repo https://github.com/AINSIGHT/CheckBuddy.git "checkin.js|lib|platforms" "" ""
+ql repo https://github.com/AINSIGHT/CheckBuddy.git "checkin.js" "" "lib|platforms"
 ```
 
 ### 2️⃣ 环境变量（本地生成一次，粘贴到青龙）
